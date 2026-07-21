@@ -1,0 +1,6 @@
+{
+  "name": "PentagonHub HA",
+  "render_readme": true,
+  "domains": ["pentagonhub_ha"],
+  "homeassistant": "2026.6.0"
+}
