@@ -1,4 +1,4 @@
-# PentagonHub HA
+# PentagonHub for Home Assistant
 
 Home Assistant custom integration for PentagonHub deploy, capture, and release
 workflows.
@@ -29,12 +29,12 @@ Add this repository to HACS as a custom integration repository:
 https://github.com/simprl/pentagonhub-ha
 ```
 
-Then install `PentagonHub HA` from HACS and restart Home Assistant.
+Then install `PentagonHub` from HACS and restart Home Assistant.
 
 After restart, add the integration from:
 
 ```text
-Settings -> Devices & services -> Add integration -> PentagonHub HA
+Settings -> Devices & services -> Add integration -> PentagonHub
 ```
 
 By default the integration connects to:

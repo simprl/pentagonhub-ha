@@ -1,5 +1,5 @@
 {
-  "title": "PentagonHub HA",
+  "title": "PentagonHub",
   "config": {
     "step": {
       "user": {
@@ -20,12 +20,12 @@
         "data": {}
       },
       "reauth_confirm": {
-        "title": "Reconnect PentagonHub HA",
-        "description": "PentagonHub HA will create a new pairing code and replace the stored installation token.",
+        "title": "Reconnect PentagonHub",
+        "description": "PentagonHub will create a new pairing code and replace the stored installation token.",
         "data": {}
       },
       "reconfigure": {
-        "title": "Reconfigure PentagonHub HA",
+        "title": "Reconfigure PentagonHub",
         "description": "Update non-secret endpoint settings.",
         "data": {
           "api_base_url": "PentagonHub Core API URL",
@@ -40,17 +40,17 @@
       "invalid_url": "Enter an absolute http(s) URL."
     },
     "abort": {
-      "already_configured": "PentagonHub HA is already configured.",
+      "already_configured": "PentagonHub is already configured.",
       "pairing_expired": "The pairing code expired. Start pairing again.",
       "pairing_rejected": "The pairing request was rejected in PentagonHub Center.",
-      "reauth_successful": "PentagonHub HA was reconnected.",
-      "reconfigure_successful": "PentagonHub HA was reconfigured."
+      "reauth_successful": "PentagonHub was reconnected.",
+      "reconfigure_successful": "PentagonHub was reconfigured."
     }
   },
   "options": {
     "step": {
       "init": {
-        "title": "PentagonHub HA options",
+        "title": "PentagonHub options",
         "data": {
           "heartbeat_interval": "Heartbeat interval"
         },

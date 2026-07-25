@@ -1,6 +1,6 @@
 {
   "domain": "pentagonhub_ha",
-  "name": "PentagonHub HA",
+  "name": "PentagonHub",
   "after_dependencies": ["http"],
   "codeowners": [],
   "config_flow": true,
@@ -9,5 +9,5 @@
   "iot_class": "cloud_polling",
   "requirements": [],
   "single_config_entry": true,
-  "version": "0.1.0"
+  "version": "0.1.1"
 }
