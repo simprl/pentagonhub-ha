@@ -1,0 +1,69 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Підключення до PentagonHub",
+        "description": "Вкажіть URL API PentagonHub Core, доступний із цієї інсталяції Home Assistant.",
+        "data": {
+          "api_base_url": "URL API PentagonHub Core",
+          "ha_base_url": "Публічний URL Home Assistant"
+        },
+        "data_description": {
+          "api_base_url": "Для локальної розробки можна використати URL у локальній мережі, наприклад http://192.168.1.20:3100/api.",
+          "ha_base_url": "Необов'язково. Цей URL відображається в PentagonHub Center як базовий URL Home Assistant."
+        }
+      },
+      "approve": {
+        "title": "Підтвердження в PentagonHub Center",
+        "description": "Відкрийте {verification_uri_complete} та підтвердьте цю інсталяцію Home Assistant. Код підключення: {user_code}. Код дійсний протягом {expires_in} секунд. Після підтвердження натисніть тут кнопку надсилання.",
+        "data": {}
+      },
+      "reauth_confirm": {
+        "title": "Повторне підключення PentagonHub",
+        "description": "PentagonHub створить новий код підключення та замінить збережений токен інсталяції.",
+        "data": {}
+      },
+      "reconfigure": {
+        "title": "Переналаштування PentagonHub",
+        "description": "Оновіть параметри підключення, які не містять секретів.",
+        "data": {
+          "api_base_url": "URL API PentagonHub Core",
+          "ha_base_url": "Публічний URL Home Assistant"
+        }
+      }
+    },
+    "error": {
+      "authorization_pending": "Запит на підключення ще не підтверджено. Підтвердьте його в PentagonHub Center, а потім надішліть форму ще раз.",
+      "cannot_connect": "Не вдалося підключитися до PentagonHub Core.",
+      "invalid_response": "PentagonHub Core повернув неочікувану відповідь.",
+      "invalid_url": "Вкажіть абсолютний URL із протоколом http або https."
+    },
+    "abort": {
+      "already_configured": "PentagonHub уже налаштовано.",
+      "pairing_expired": "Термін дії коду підключення минув. Розпочніть підключення ще раз.",
+      "pairing_rejected": "Запит на підключення відхилено в PentagonHub Center.",
+      "reauth_successful": "PentagonHub повторно підключено.",
+      "reconfigure_successful": "PentagonHub переналаштовано."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Параметри PentagonHub",
+        "data": {
+          "heartbeat_interval": "Інтервал перевірки зв'язку"
+        },
+        "data_description": {
+          "heartbeat_interval": "Кількість секунд між перевірками зв'язку з PentagonHub Core."
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "connection": {
+        "name": "Підключення"
+      }
+    }
+  }
+}

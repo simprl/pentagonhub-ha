@@ -1,0 +1,69 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to PentagonHub",
+        "description": "Enter the PentagonHub Core API URL reachable from this Home Assistant instance.",
+        "data": {
+          "api_base_url": "PentagonHub Core API URL",
+          "ha_base_url": "Home Assistant public URL"
+        },
+        "data_description": {
+          "api_base_url": "For local development this may be a LAN URL such as http://192.168.1.20:3100/api.",
+          "ha_base_url": "Optional. This is shown in PentagonHub Center as the HA base URL."
+        }
+      },
+      "approve": {
+        "title": "Approve in PentagonHub Center",
+        "description": "Open {verification_uri_complete} and approve this Home Assistant instance. Pairing code: {user_code}. The code expires in {expires_in} seconds. After approving, select Submit here.",
+        "data": {}
+      },
+      "reauth_confirm": {
+        "title": "Reconnect PentagonHub",
+        "description": "PentagonHub will create a new pairing code and replace the stored installation token.",
+        "data": {}
+      },
+      "reconfigure": {
+        "title": "Reconfigure PentagonHub",
+        "description": "Update non-secret endpoint settings.",
+        "data": {
+          "api_base_url": "PentagonHub Core API URL",
+          "ha_base_url": "Home Assistant public URL"
+        }
+      }
+    },
+    "error": {
+      "authorization_pending": "The pairing request is not approved yet. Approve it in PentagonHub Center, then submit again.",
+      "cannot_connect": "Cannot connect to PentagonHub Core.",
+      "invalid_response": "PentagonHub Core returned an unexpected response.",
+      "invalid_url": "Enter an absolute http(s) URL."
+    },
+    "abort": {
+      "already_configured": "PentagonHub is already configured.",
+      "pairing_expired": "The pairing code expired. Start pairing again.",
+      "pairing_rejected": "The pairing request was rejected in PentagonHub Center.",
+      "reauth_successful": "PentagonHub was reconnected.",
+      "reconfigure_successful": "PentagonHub was reconfigured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "PentagonHub options",
+        "data": {
+          "heartbeat_interval": "Heartbeat interval"
+        },
+        "data_description": {
+          "heartbeat_interval": "Seconds between heartbeat requests to PentagonHub Core."
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "connection": {
+        "name": "Connection"
+      }
+    }
+  }
+}
