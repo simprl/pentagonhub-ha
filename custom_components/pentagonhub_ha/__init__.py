@@ -22,6 +22,7 @@ from .const import (
     STORAGE_DIR_NAME,
 )
 from .coordinator import PentagonHubDataUpdateCoordinator
+from .entry_mode import resolve_installation_mode
 from .status_view import PentagonHubStatusView
 
 BASE_PLATFORMS: tuple[Platform, ...] = (Platform.SENSOR,)
@@ -68,11 +69,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     except Exception as err:
         raise ConfigEntryNotReady(f"PentagonHub Core is not reachable: {err}") from err
 
-    is_dev = entry.data.get(CONF_INSTALLATION_MODE) == "dev"
-    if is_dev and BUILD_PROFILE != "dev":
-        raise ConfigEntryNotReady(
-            "PentagonHub HA Dev installation requires the Dev integration artifact"
+    try:
+        installation_mode = resolve_installation_mode(
+            entry.data.get(CONF_INSTALLATION_MODE),
+            BUILD_PROFILE,
         )
+    except ValueError as err:
+        raise ConfigEntryNotReady(str(err)) from err
+    if installation_mode != BUILD_PROFILE:
+        raise ConfigEntryNotReady(
+            f"PentagonHub HA {installation_mode.title()} installation requires "
+            f"the {installation_mode.title()} integration artifact"
+        )
+    is_dev = installation_mode == "dev"
 
     sandbox = None
     platforms = BASE_PLATFORMS
@@ -90,6 +99,38 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         platforms=platforms,
     )
     await hass.config_entries.async_forward_entry_setups(entry, platforms)
+    return True
+
+
+async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Migrate legacy config entries created before release profiles existed."""
+
+    if entry.version > 2:
+        _LOGGER.error(
+            "Cannot migrate PentagonHub HA config entry from unsupported version %s",
+            entry.version,
+        )
+        return False
+
+    if entry.version == 2:
+        return True
+
+    try:
+        installation_mode = resolve_installation_mode(
+            entry.data.get(CONF_INSTALLATION_MODE),
+            BUILD_PROFILE,
+        )
+    except ValueError as err:
+        _LOGGER.error("Cannot migrate PentagonHub HA config entry: %s", err)
+        return False
+
+    data = dict(entry.data)
+    data[CONF_INSTALLATION_MODE] = installation_mode
+    hass.config_entries.async_update_entry(entry, data=data, version=2)
+    _LOGGER.info(
+        "Migrated PentagonHub HA config entry to version 2 with %s mode",
+        installation_mode,
+    )
     return True
 
 
