@@ -30,7 +30,18 @@ async def async_setup_entry(
     """Set up PentagonHub HA sensors."""
 
     coordinator: PentagonHubDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id].coordinator
-    async_add_entities([PentagonHubConnectionSensor(coordinator, entry)])
+    runtime = hass.data[DOMAIN][entry.entry_id].sandbox
+    entities: list[SensorEntity] = [PentagonHubConnectionSensor(coordinator, entry)]
+    if runtime is not None:
+        from .sandbox_entities import PentagonHubSandboxSensor
+
+        entities.extend(
+            [
+                PentagonHubSandboxSensor(hass, runtime, entity)
+                for entity in runtime.entities_for_domain("sensor")
+            ]
+        )
+    async_add_entities(entities)
 
 
 class PentagonHubConnectionSensor(CoordinatorEntity[PentagonHubDataUpdateCoordinator], SensorEntity):

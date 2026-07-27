@@ -127,16 +127,16 @@ class PentagonHubApiClient:
 
         try:
             async with asyncio.timeout(DEFAULT_TIMEOUT_SECONDS):
-                with artifact_path.open("rb") as file_obj:
-                    async with self._session.post(
-                        upload_url,
-                        data=file_obj,
-                        headers={
-                            "Authorization": f"Bearer {installation_token}",
-                            "Content-Type": "application/octet-stream",
-                        },
-                    ) as response:
-                        return await _read_json_response(response)
+                content = await asyncio.to_thread(artifact_path.read_bytes)
+                async with self._session.post(
+                    upload_url,
+                    data=content,
+                    headers={
+                        "Authorization": f"Bearer {installation_token}",
+                        "Content-Type": "application/octet-stream",
+                    },
+                ) as response:
+                    return await _read_json_response(response)
         except TimeoutError as err:
             raise PentagonHubApiError("PentagonHub artifact upload timed out") from err
         except (ClientError, OSError) as err:
@@ -158,10 +158,8 @@ class PentagonHubApiClient:
                 ) as response:
                     if response.status >= 400:
                         await _read_json_response(response)
-                    target_path.parent.mkdir(parents=True, exist_ok=True)
-                    with target_path.open("wb") as file_obj:
-                        async for chunk in response.content.iter_chunked(64 * 1024):
-                            file_obj.write(chunk)
+                    content = await response.read()
+                    await asyncio.to_thread(_write_artifact, target_path, content)
         except TimeoutError as err:
             raise PentagonHubApiError("PentagonHub artifact download timed out") from err
         except (ClientError, OSError) as err:
@@ -232,3 +230,8 @@ def normalize_optional_url(value: str | None) -> str | None:
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise ValueError("URL must be an absolute http(s) URL")
     return normalized
+
+
+def _write_artifact(target_path: Path, content: bytes) -> None:
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    target_path.write_bytes(content)

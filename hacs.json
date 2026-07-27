@@ -1,6 +1,9 @@
 {
   "name": "PentagonHub",
   "render_readme": true,
+  "zip_release": true,
+  "hide_default_branch": true,
+  "filename": "pentagonhub_ha.zip",
   "domains": ["pentagonhub_ha"],
   "homeassistant": "2025.11.0"
 }

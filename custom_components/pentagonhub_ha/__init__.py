@@ -6,6 +6,7 @@ import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from homeassistant import config_entries
 from homeassistant.config_entries import ConfigEntry
@@ -13,11 +14,24 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 
-from .const import BOOTSTRAP_FILE_NAME, DOMAIN, STORAGE_DIR_NAME
+from .build_profile import BUILD_PROFILE
+from .const import (
+    BOOTSTRAP_FILE_NAME,
+    CONF_INSTALLATION_MODE,
+    DOMAIN,
+    STORAGE_DIR_NAME,
+)
 from .coordinator import PentagonHubDataUpdateCoordinator
 from .status_view import PentagonHubStatusView
 
-PLATFORMS: list[Platform] = [Platform.SENSOR]
+BASE_PLATFORMS: tuple[Platform, ...] = (Platform.SENSOR,)
+DEV_PLATFORMS: tuple[Platform, ...] = (
+    Platform.BINARY_SENSOR,
+    Platform.SWITCH,
+    Platform.CLIMATE,
+    Platform.MEDIA_PLAYER,
+    Platform.ALARM_CONTROL_PANEL,
+)
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -26,6 +40,8 @@ class PentagonHubEntryRuntime:
     """Runtime objects for a PentagonHub HA config entry."""
 
     coordinator: PentagonHubDataUpdateCoordinator
+    sandbox: Any | None
+    platforms: tuple[Platform, ...]
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
@@ -52,15 +68,37 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     except Exception as err:
         raise ConfigEntryNotReady(f"PentagonHub Core is not reachable: {err}") from err
 
-    hass.data[DOMAIN][entry.entry_id] = PentagonHubEntryRuntime(coordinator=coordinator)
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    is_dev = entry.data.get(CONF_INSTALLATION_MODE) == "dev"
+    if is_dev and BUILD_PROFILE != "dev":
+        raise ConfigEntryNotReady(
+            "PentagonHub HA Dev installation requires the Dev integration artifact"
+        )
+
+    sandbox = None
+    platforms = BASE_PLATFORMS
+    if is_dev:
+        from .sandbox_runtime import async_load_sandbox_runtime
+        from .sandbox_services import async_register_sandbox_services
+
+        async_register_sandbox_services(hass)
+        sandbox = await async_load_sandbox_runtime(hass, entry.entry_id)
+        platforms = (*BASE_PLATFORMS, *DEV_PLATFORMS)
+
+    hass.data[DOMAIN][entry.entry_id] = PentagonHubEntryRuntime(
+        coordinator=coordinator,
+        sandbox=sandbox,
+        platforms=platforms,
+    )
+    await hass.config_entries.async_forward_entry_setups(entry, platforms)
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a PentagonHub HA config entry."""
 
-    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    runtime = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    platforms = runtime.platforms if runtime else BASE_PLATFORMS
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, platforms)
     if unload_ok:
         hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
     return unload_ok

@@ -69,6 +69,7 @@ class PentagonHubDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if isinstance(command, dict):
                 await async_execute_command(
                     self.hass,
+                    self.entry,
                     self._client,
                     self.entry.data[CONF_INSTALLATION_TOKEN],
                     command,

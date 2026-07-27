@@ -60,6 +60,50 @@
       }
     }
   },
+  "services": {
+    "set_sandbox_entity": {
+      "name": "Set sandbox entity",
+      "description": "Changes the local simulated state or attributes of a PentagonHub sandbox entity.",
+      "fields": {
+        "entity_id": {
+          "name": "Entity",
+          "description": "PentagonHub sandbox entity to change."
+        },
+        "state": {
+          "name": "State",
+          "description": "Local simulated state. Leave empty to change attributes only."
+        },
+        "attributes": {
+          "name": "Attributes",
+          "description": "JSON object merged into the local simulated attributes."
+        }
+      }
+    },
+    "reset_sandbox_entity": {
+      "name": "Reset sandbox entity",
+      "description": "Restores one sandbox entity to the last synchronized baseline.",
+      "fields": {
+        "entity_id": {
+          "name": "Entity",
+          "description": "PentagonHub sandbox entity to restore."
+        }
+      }
+    },
+    "reset_sandbox": {
+      "name": "Reset sandbox",
+      "description": "Restores every sandbox entity to the last synchronized baseline."
+    },
+    "advance_sandbox_time": {
+      "name": "Advance sandbox time",
+      "description": "Advances deterministic climate and media-player simulation by logical ticks.",
+      "fields": {
+        "steps": {
+          "name": "Steps",
+          "description": "Number of logical simulation ticks."
+        }
+      }
+    }
+  },
   "entity": {
     "sensor": {
       "connection": {

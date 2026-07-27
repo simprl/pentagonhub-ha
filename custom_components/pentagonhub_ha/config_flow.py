@@ -19,6 +19,7 @@ from .const import (
     CONF_HA_INSTANCE_ID,
     CONF_HEARTBEAT_INTERVAL,
     CONF_INSTALLATION_ID,
+    CONF_INSTALLATION_MODE,
     CONF_INSTALLATION_TOKEN,
     DEFAULT_API_BASE_URL,
     DEFAULT_HEARTBEAT_INTERVAL,
@@ -133,6 +134,7 @@ class PentagonHubHaConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         CONF_HA_BASE_URL: self._ha_base_url,
                         CONF_HA_INSTANCE_ID: self._ha_instance_id,
                         CONF_INSTALLATION_ID: _required_string(result, "installation_id"),
+                        CONF_INSTALLATION_MODE: _required_string(result, "installation_mode"),
                         CONF_INSTALLATION_TOKEN: _required_string(result, "installation_token"),
                     }
                     if self.source == config_entries.SOURCE_REAUTH:
@@ -204,6 +206,7 @@ class PentagonHubHaConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             CONF_HA_BASE_URL: self._ha_base_url,
             CONF_HA_INSTANCE_ID: self._ha_instance_id,
             CONF_INSTALLATION_ID: _required_string(result, "installation_id"),
+            CONF_INSTALLATION_MODE: _required_string(result, "installation_mode"),
             CONF_INSTALLATION_TOKEN: _required_string(result, "installation_token"),
         }
         return self.async_create_entry(title=NAME, data=data)

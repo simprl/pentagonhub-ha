@@ -14,16 +14,36 @@ import re
 from typing import Any
 import zipfile
 
+from attr import asdict as attrs_asdict
+from attr import has as is_attrs_class
+from homeassistant.const import Platform
 from homeassistant.const import __version__ as HA_VERSION
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 
 from .api import PentagonHubApiClient
-from .const import STORAGE_DIR_NAME
+from .build_profile import BUILD_PROFILE
+from .const import (
+    CONF_INSTALLATION_ID,
+    CONF_INSTALLATION_MODE,
+    DOMAIN,
+    SANDBOX_MARKER_ATTRIBUTE,
+    SANDBOX_UNIQUE_ID_PREFIX,
+    STORAGE_DIR_NAME,
+)
 
 _LOGGER = logging.getLogger(__name__)
+_SANDBOX_PLATFORMS = [
+    Platform.SENSOR,
+    Platform.BINARY_SENSOR,
+    Platform.SWITCH,
+    Platform.CLIMATE,
+    Platform.MEDIA_PLAYER,
+    Platform.ALARM_CONTROL_PANEL,
+]
 
 _ALLOWED_EXACT = {
     "configuration.yaml",
@@ -67,6 +87,7 @@ class ExportResult:
 
 async def async_execute_command(
     hass: HomeAssistant,
+    entry: ConfigEntry,
     client: PentagonHubApiClient,
     installation_token: str,
     command: dict[str, Any],
@@ -182,6 +203,106 @@ async def async_execute_command(
 
         if command_type == "ha.context.export":
             result = await _async_export_context(hass, command_id, payload)
+            await _async_upload_json_result(
+                hass,
+                client,
+                installation_token,
+                command_id,
+                payload,
+                result,
+                "context-export",
+                completion_extra={"context_summary": _context_result_summary(result)},
+            )
+            return
+
+        if command_type == "ha.sandbox.export":
+            result = await _async_export_sandbox(hass, entry)
+            await _async_upload_json_result(
+                hass,
+                client,
+                installation_token,
+                command_id,
+                payload,
+                result,
+                "sandbox-export",
+            )
+            return
+
+        if command_type == "ha.sandbox.inventory":
+            _require_dev_installation(entry)
+            result = await _async_sandbox_inventory(hass, entry)
+            await _async_upload_json_result(
+                hass,
+                client,
+                installation_token,
+                command_id,
+                payload,
+                result,
+                "sandbox-inventory",
+            )
+            return
+
+        if command_type == "ha.sandbox.status":
+            _require_dev_installation(entry)
+            from .sandbox_runtime import sandbox_runtime_status
+
+            result = await hass.async_add_executor_job(
+                sandbox_runtime_status,
+                Path(hass.config.path()),
+            )
+            await client.complete_command(installation_token, command_id, result)
+            return
+
+        if command_type == "ha.sandbox.suspend":
+            _require_dev_installation(entry)
+            runtime = hass.data[DOMAIN][entry.entry_id].sandbox
+            await runtime.async_set_suspended(True)
+            await client.complete_command(
+                installation_token,
+                command_id,
+                {"suspended": True},
+            )
+            return
+
+        if command_type == "ha.sandbox.apply":
+            _require_dev_installation(entry)
+            from .sandbox_runtime import apply_sandbox_manifest
+
+            download_path = _tmp_dir(Path(hass.config.path())) / f"sandbox-{command_id}.json"
+            await client.download_artifact_to_path(
+                installation_token,
+                _required_string(payload, "artifact_download_url"),
+                download_path,
+            )
+            manifest = await hass.async_add_executor_job(
+                _read_sandbox_manifest_artifact,
+                download_path,
+                payload,
+            )
+            _remove_stale_sandbox_registry_entries(hass, manifest)
+            result = await hass.async_add_executor_job(
+                apply_sandbox_manifest,
+                Path(hass.config.path()),
+                manifest,
+                _required_string(dict(entry.data), CONF_INSTALLATION_ID),
+            )
+            await _async_reload_sandbox_platforms(hass, entry)
+            await client.complete_command(installation_token, command_id, result)
+            return
+
+        if command_type == "ha.sandbox.clear":
+            _require_dev_installation(entry)
+            from .sandbox_runtime import clear_sandbox_runtime
+
+            _remove_stale_sandbox_registry_entries(
+                hass,
+                {"entities": []},
+            )
+            result = await hass.async_add_executor_job(
+                clear_sandbox_runtime,
+                Path(hass.config.path()),
+            )
+            await _async_reload_sandbox_platforms(hass, entry)
             await client.complete_command(installation_token, command_id, result)
             return
 
@@ -550,7 +671,8 @@ async def _async_export_context(
     ]
     entity_entries = [
         _sanitize_json(_jsonify(entry))
-        for entry in entity_registry.entities.values()
+        for entity_id in entity_registry.entities
+        if (entry := entity_registry.async_get(entity_id)) is not None
     ]
     device_entries = [
         _sanitize_json(_jsonify(entry))
@@ -588,6 +710,204 @@ async def _async_export_context(
             "device_registry": len(device_entries),
             "area_registry": len(area_entries),
         },
+    }
+
+
+async def _async_export_sandbox(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+) -> dict[str, Any]:
+    """Export sanitized source state for virtual-environment generation."""
+
+    exported_at = _utc_now_iso()
+    entity_registry = er.async_get(hass)
+    device_registry = dr.async_get(hass)
+    area_registry = ar.async_get(hass)
+    entities: list[dict[str, Any]] = []
+
+    for state in hass.states.async_all():
+        registry_entry = entity_registry.async_get(state.entity_id)
+        attributes = _bounded_attributes(_sanitize_json(_jsonify(dict(state.attributes))))
+        entities.append(
+            {
+                "entity_id": state.entity_id,
+                "domain": state.entity_id.split(".", 1)[0],
+                "state": str(state.state)[:4096],
+                "attributes": attributes,
+                "unique_id": _optional_string(
+                    getattr(registry_entry, "unique_id", None)
+                ),
+                "platform": _optional_string(
+                    getattr(registry_entry, "platform", None)
+                ),
+                "device_id": _optional_string(
+                    getattr(registry_entry, "device_id", None)
+                ),
+                "area_id": _optional_string(
+                    getattr(registry_entry, "area_id", None)
+                ),
+                "config_entry_id": _optional_string(
+                    getattr(registry_entry, "config_entry_id", None)
+                ),
+                "name": _optional_string(
+                    getattr(registry_entry, "name", None)
+                )
+                or _optional_string(attributes.get("friendly_name")),
+            }
+        )
+
+    devices = [
+        {
+            "id": str(device.id),
+            "name": _optional_string(getattr(device, "name", None)),
+            "name_by_user": _optional_string(getattr(device, "name_by_user", None)),
+            "manufacturer": _optional_string(getattr(device, "manufacturer", None)),
+            "model": _optional_string(getattr(device, "model", None)),
+            "area_id": _optional_string(getattr(device, "area_id", None)),
+        }
+        for device in device_registry.devices.values()
+    ]
+    areas = [
+        {
+            "id": str(area.id),
+            "name": str(area.name),
+        }
+        for area in area_registry.areas.values()
+    ]
+    entities.sort(key=lambda item: item["entity_id"])
+    devices.sort(key=lambda item: item["id"])
+    areas.sort(key=lambda item: item["id"])
+    return {
+        "schema_version": "sandbox_export_v1",
+        "installation_id": _required_string(dict(entry.data), CONF_INSTALLATION_ID),
+        "exported_at": exported_at,
+        "ha_version": HA_VERSION,
+        "entities": entities,
+        "devices": devices,
+        "areas": areas,
+    }
+
+
+async def _async_sandbox_inventory(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+) -> dict[str, Any]:
+    """Export target ownership data used by preflight and postflight."""
+
+    from .sandbox_runtime import sandbox_runtime_status
+
+    entity_registry = er.async_get(hass)
+    entities_by_id: dict[str, dict[str, Any]] = {}
+    states_by_id = {state.entity_id: state for state in hass.states.async_all()}
+    entity_ids = sorted(set(states_by_id) | set(entity_registry.entities))
+    for entity_id in entity_ids:
+        state = states_by_id.get(entity_id)
+        registry_entry = entity_registry.async_get(entity_id)
+        unique_id = _optional_string(getattr(registry_entry, "unique_id", None))
+        marker = (
+            unique_id
+            if unique_id and unique_id.startswith(SANDBOX_UNIQUE_ID_PREFIX)
+            else _optional_string(
+                state.attributes.get(SANDBOX_MARKER_ATTRIBUTE)
+                if state is not None
+                else None
+            )
+        )
+        entities_by_id[entity_id] = {
+            "entity_id": entity_id,
+            "domain": entity_id.split(".", 1)[0],
+            "state": str(state.state)[:4096] if state is not None else "unavailable",
+            "unique_id": unique_id,
+            "platform": _optional_string(
+                getattr(registry_entry, "platform", None)
+            ),
+            "device_id": _optional_string(
+                getattr(registry_entry, "device_id", None)
+            ),
+            "config_entry_id": _optional_string(
+                getattr(registry_entry, "config_entry_id", None)
+            ),
+            "sandbox_marker": marker,
+        }
+    entities = list(entities_by_id.values())
+    status = await hass.async_add_executor_job(
+        sandbox_runtime_status,
+        Path(hass.config.path()),
+    )
+    return {
+        "schema_version": "sandbox_inventory_v1",
+        "installation_id": _required_string(dict(entry.data), CONF_INSTALLATION_ID),
+        "exported_at": _utc_now_iso(),
+        "runtime_hash": status.get("runtime_hash"),
+        "entities": entities,
+    }
+
+
+async def _async_upload_json_result(
+    hass: HomeAssistant,
+    client: PentagonHubApiClient,
+    installation_token: str,
+    command_id: str,
+    payload: dict[str, Any],
+    result: dict[str, Any],
+    prefix: str,
+    *,
+    completion_extra: dict[str, Any] | None = None,
+) -> None:
+    artifact_id = _required_string(payload, "artifact_id")
+    path = _tmp_dir(Path(hass.config.path())) / f"{prefix}-{command_id}.json"
+    await hass.async_add_executor_job(
+        _write_json_result,
+        path,
+        result,
+    )
+    await client.upload_artifact(
+        installation_token,
+        _required_string(payload, "artifact_upload_url"),
+        path,
+    )
+    artifact_metadata = await hass.async_add_executor_job(
+        _artifact_result_metadata,
+        path,
+    )
+    await client.complete_command(
+        installation_token,
+        command_id,
+        {
+            "artifact_id": artifact_id,
+            **artifact_metadata,
+            **(completion_extra or {}),
+        },
+    )
+
+
+def _context_result_summary(result: dict[str, Any]) -> dict[str, Any]:
+    counts = result.get("counts")
+    if not isinstance(counts, dict):
+        raise ValueError("Context export counts are missing")
+    return {
+        "exported_at": _required_string(result, "exported_at"),
+        "ha_version": _required_string(result, "ha_version"),
+        "entities_count": _required_nonnegative_integer(counts, "entities"),
+        "entity_registry_count": _required_nonnegative_integer(
+            counts,
+            "entity_registry",
+        ),
+        "device_registry_count": _required_nonnegative_integer(
+            counts,
+            "device_registry",
+        ),
+        "area_registry_count": _required_nonnegative_integer(
+            counts,
+            "area_registry",
+        ),
+    }
+
+
+def _artifact_result_metadata(path: Path) -> dict[str, Any]:
+    return {
+        "artifact_sha256": _sha256_file(path),
+        "artifact_size_bytes": path.stat().st_size,
     }
 
 
@@ -852,6 +1172,29 @@ async def _async_reload_lovelace(hass: HomeAssistant) -> str:
     return "called"
 
 
+async def _async_reload_sandbox_platforms(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+) -> None:
+    """Reload entity platforms before reporting a sandbox mutation complete."""
+
+    from .sandbox_runtime import async_load_sandbox_runtime
+
+    unloaded = await hass.config_entries.async_unload_platforms(
+        entry,
+        _SANDBOX_PLATFORMS,
+    )
+    if not unloaded:
+        raise RuntimeError("Could not unload PentagonHub sandbox entity platforms")
+
+    entry_runtime = hass.data[DOMAIN][entry.entry_id]
+    entry_runtime.sandbox = await async_load_sandbox_runtime(hass, entry.entry_id)
+    await hass.config_entries.async_forward_entry_setups(
+        entry,
+        _SANDBOX_PLATFORMS,
+    )
+
+
 def _tmp_dir(config_dir: Path) -> Path:
     path = config_dir / STORAGE_DIR_NAME / "tmp"
     path.mkdir(parents=True, exist_ok=True)
@@ -893,6 +1236,102 @@ def _required_string(source: dict[str, Any], key: str) -> str:
     return value
 
 
+def _required_nonnegative_integer(source: dict[str, Any], key: str) -> int:
+    value = source.get(key)
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise ValueError(f"Command result is missing {key}")
+    return value
+
+
+def _optional_string(value: Any) -> str | None:
+    return value if isinstance(value, str) and value else None
+
+
+def _require_dev_installation(entry: ConfigEntry) -> None:
+    if BUILD_PROFILE != "dev" or entry.data.get(CONF_INSTALLATION_MODE) != "dev":
+        raise PermissionError("PentagonHub sandbox mutation is allowed only on Dev HA")
+
+
+def _read_sandbox_manifest_artifact(
+    artifact_path: Path,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    if not artifact_path.exists() or not artifact_path.is_file():
+        raise ValueError("Sandbox runtime artifact is missing")
+    size_bytes = artifact_path.stat().st_size
+    if size_bytes > 25 * 1024 * 1024:
+        raise ValueError("Sandbox runtime artifact exceeds 25 MB")
+    expected_sha256 = payload.get("artifact_sha256")
+    if (
+        isinstance(expected_sha256, str)
+        and expected_sha256
+        and _sha256_file(artifact_path) != expected_sha256
+    ):
+        raise ValueError("Sandbox runtime artifact hash mismatch")
+    parsed = json.loads(artifact_path.read_text(encoding="utf-8"))
+    if not isinstance(parsed, dict):
+        raise ValueError("Sandbox runtime artifact must contain a JSON object")
+    return parsed
+
+
+def _write_json_result(path: Path, value: dict[str, Any]) -> None:
+    encoded = json.dumps(
+        value,
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    if len(encoded) > 25 * 1024 * 1024:
+        raise ValueError("Sandbox export exceeds 25 MB")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(encoded)
+
+
+def _bounded_attributes(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    result: dict[str, Any] = {}
+    for key in sorted(value)[:200]:
+        candidate = value[key]
+        try:
+            encoded = json.dumps(candidate, ensure_ascii=True, default=str)
+        except (TypeError, ValueError):
+            continue
+        if len(encoded.encode("utf-8")) > 16 * 1024:
+            continue
+        next_result = {**result, str(key): candidate}
+        if len(
+            json.dumps(next_result, ensure_ascii=True, default=str).encode("utf-8")
+        ) > 64 * 1024:
+            continue
+        result = next_result
+    return result
+
+
+def _remove_stale_sandbox_registry_entries(
+    hass: HomeAssistant,
+    manifest: dict[str, Any],
+) -> None:
+    """Remove only stale PentagonHub-owned registry rows before entry reload."""
+
+    expected_by_marker = {
+        str(entity.get("unique_id")): str(entity.get("entity_id"))
+        for entity in manifest.get("entities", [])
+        if isinstance(entity, dict)
+        and isinstance(entity.get("unique_id"), str)
+        and isinstance(entity.get("entity_id"), str)
+    }
+    registry = er.async_get(hass)
+    for registry_entry in list(registry.entities.values()):
+        marker = _optional_string(getattr(registry_entry, "unique_id", None))
+        if not marker or not marker.startswith(SANDBOX_UNIQUE_ID_PREFIX):
+            continue
+        expected_entity_id = expected_by_marker.get(marker)
+        if expected_entity_id == registry_entry.entity_id:
+            continue
+        registry.async_remove(registry_entry.entity_id)
+
+
 def _jsonify(value: Any) -> Any:
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
@@ -914,6 +1353,8 @@ def _jsonify(value: Any) -> Any:
         return _jsonify(as_partial_dict())
     if is_dataclass(value):
         return _jsonify(asdict(value))
+    if is_attrs_class(type(value)):
+        return _jsonify(attrs_asdict(value, recurse=False))
     if hasattr(value, "__dict__"):
         return {
             key: _jsonify(item)
