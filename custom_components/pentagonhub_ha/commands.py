@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import base64
 from dataclasses import dataclass
-from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -14,8 +13,6 @@ import re
 from typing import Any
 import zipfile
 
-from attr import asdict as attrs_asdict
-from attr import has as is_attrs_class
 from homeassistant.const import Platform
 from homeassistant.const import __version__ as HA_VERSION
 from homeassistant.config_entries import ConfigEntry
@@ -34,6 +31,7 @@ from .const import (
     SANDBOX_UNIQUE_ID_PREFIX,
     STORAGE_DIR_NAME,
 )
+from .json_values import jsonify as _jsonify
 
 _LOGGER = logging.getLogger(__name__)
 _SANDBOX_PLATFORMS = [
@@ -1330,38 +1328,6 @@ def _remove_stale_sandbox_registry_entries(
         if expected_entity_id == registry_entry.entity_id:
             continue
         registry.async_remove(registry_entry.entity_id)
-
-
-def _jsonify(value: Any) -> Any:
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return value
-    if isinstance(value, datetime):
-        return _datetime_iso(value)
-    if isinstance(value, Path):
-        return str(value)
-    if isinstance(value, dict):
-        return {str(key): _jsonify(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_jsonify(item) for item in value]
-    if isinstance(value, (set, frozenset)):
-        return sorted(_jsonify(item) for item in value)
-    as_dict = getattr(value, "as_dict", None)
-    if callable(as_dict):
-        return _jsonify(as_dict())
-    as_partial_dict = getattr(value, "as_partial_dict", None)
-    if callable(as_partial_dict):
-        return _jsonify(as_partial_dict())
-    if is_dataclass(value):
-        return _jsonify(asdict(value))
-    if is_attrs_class(type(value)):
-        return _jsonify(attrs_asdict(value, recurse=False))
-    if hasattr(value, "__dict__"):
-        return {
-            key: _jsonify(item)
-            for key, item in vars(value).items()
-            if not key.startswith("_")
-        }
-    return str(value)
 
 
 def _sanitize_json(value: Any, key: str | None = None) -> Any:
