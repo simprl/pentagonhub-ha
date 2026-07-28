@@ -40,7 +40,7 @@ _LOGGER = logging.getLogger(__name__)
 class PentagonHubHaConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle the PentagonHub HA config flow."""
 
-    VERSION = 1
+    VERSION = 2
 
     def __init__(self) -> None:
         self._api_base_url: str | None = None
