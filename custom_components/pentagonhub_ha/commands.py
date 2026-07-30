@@ -32,6 +32,12 @@ from .const import (
     STORAGE_DIR_NAME,
 )
 from .json_values import jsonify as _jsonify
+from .managed_configuration import (
+    delete_managed_file as _delete_managed_file,
+    managed_file_bytes as _managed_file_bytes,
+    managed_file_hash as _managed_file_hash,
+    write_managed_file as _write_managed_file,
+)
 
 _LOGGER = logging.getLogger(__name__)
 _SANDBOX_PLATFORMS = [
@@ -327,13 +333,16 @@ def _export_managed_files(config_dir: Path, command_id: str, payload: dict[str, 
 
     with zipfile.ZipFile(artifact_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for relative_path, absolute_path in files:
-            file_sha256 = _sha256_file(absolute_path)
-            size_bytes = absolute_path.stat().st_size
+            content = _managed_file_bytes(relative_path, absolute_path)
+            if relative_path == "configuration.yaml" and not content:
+                continue
+            file_sha256 = hashlib.sha256(content).hexdigest()
+            size_bytes = len(content)
             manifest_files[relative_path] = {
                 "sha256": file_sha256,
                 "size": size_bytes,
             }
-            archive.write(absolute_path, f"files/{relative_path}")
+            archive.writestr(f"files/{relative_path}", content)
 
         manifest = {
             "schema_version": 1,
@@ -405,10 +414,10 @@ def _apply_export_artifact(
                 raise ValueError(f"Artifact file hash mismatch: {relative_path}")
 
             target_path = config_dir / relative_path
-            previous_hash = _sha256_file(target_path) if target_path.exists() and target_path.is_file() else None
+            previous_hash = _managed_file_hash(relative_path, target_path)
             next_hash = hashlib.sha256(content).hexdigest()
             target_path.parent.mkdir(parents=True, exist_ok=True)
-            target_path.write_bytes(content)
+            _write_managed_file(config_dir, relative_path, content)
             applied_files += 1
             if previous_hash != next_hash:
                 changed_files.append(relative_path)
@@ -459,17 +468,15 @@ def _apply_release_artifact(
     changed_files: list[str] = []
     for relative_path, content, next_hash in planned_files:
         target_path = config_dir / relative_path
-        previous_hash = _sha256_file(target_path) if target_path.exists() and target_path.is_file() else None
+        previous_hash = _managed_file_hash(relative_path, target_path)
         target_path.parent.mkdir(parents=True, exist_ok=True)
-        target_path.write_bytes(content)
+        _write_managed_file(config_dir, relative_path, content)
         if previous_hash != next_hash:
             changed_files.append(relative_path)
 
     actually_deleted: list[str] = []
     for relative_path in deleted_paths:
-        target_path = config_dir / relative_path
-        if target_path.exists() and target_path.is_file() and not target_path.is_symlink():
-            target_path.unlink()
+        if _delete_managed_file(config_dir, relative_path):
             actually_deleted.append(relative_path)
 
     release_storage_dir = _release_storage_dir(config_dir, version)
@@ -548,17 +555,15 @@ def _rollback_release(
     changed_files: list[str] = []
     for relative_path, content, next_hash in planned_files:
         target_path = config_dir / relative_path
-        previous_hash = _sha256_file(target_path) if target_path.exists() and target_path.is_file() else None
+        previous_hash = _managed_file_hash(relative_path, target_path)
         target_path.parent.mkdir(parents=True, exist_ok=True)
-        target_path.write_bytes(content)
+        _write_managed_file(config_dir, relative_path, content)
         if previous_hash != next_hash:
             changed_files.append(relative_path)
 
     actually_deleted: list[str] = []
     for relative_path in deleted_paths:
-        target_path = config_dir / relative_path
-        if target_path.exists() and target_path.is_file() and not target_path.is_symlink():
-            target_path.unlink()
+        if _delete_managed_file(config_dir, relative_path):
             actually_deleted.append(relative_path)
 
     release_storage_dir = _release_storage_dir(config_dir, version)
@@ -635,9 +640,9 @@ def _apply_delta_files(
     changed_files: list[str] = []
     for relative_path, content, next_hash in planned_files:
         target_path = config_dir / relative_path
-        previous_hash = _sha256_file(target_path) if target_path.exists() and target_path.is_file() else None
+        previous_hash = _managed_file_hash(relative_path, target_path)
         target_path.parent.mkdir(parents=True, exist_ok=True)
-        target_path.write_bytes(content)
+        _write_managed_file(config_dir, relative_path, content)
         if previous_hash != next_hash:
             changed_files.append(relative_path)
 
@@ -1095,7 +1100,7 @@ def _detect_release_drift(
         matching_target = True
         for relative_path, previous_meta in sorted(previous_files.items()):
             target_path = config_dir / relative_path
-            current_hash = _sha256_file(target_path) if target_path.exists() and target_path.is_file() else None
+            current_hash = _managed_file_hash(relative_path, target_path)
             previous_hash = previous_meta.get("sha256")
             if current_hash == previous_hash:
                 continue
@@ -1112,7 +1117,7 @@ def _detect_release_drift(
         target_path = config_dir / relative_path
         if not target_path.exists() or not target_path.is_file():
             continue
-        if _sha256_file(target_path) != next_meta.get("sha256"):
+        if _managed_file_hash(relative_path, target_path) != next_meta.get("sha256"):
             unmanaged_conflicts.append(relative_path)
     if unmanaged_conflicts:
         return "initial_unmanaged", unmanaged_conflicts
