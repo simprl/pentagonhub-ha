@@ -54,7 +54,8 @@ Implemented now:
 - storage of the scoped PentagonHub installation token in the Home Assistant
   config entry;
 - immediate and periodic heartbeat to PentagonHub Core;
-- outbound SSE command notifications with authenticated HTTP command draining;
+- outbound SSE command notifications with authenticated HTTP command draining
+  and heartbeat polling fallback;
 - connection-state sensor;
 - redacted diagnostics;
 - local `/api/pentagonhub_ha/status` endpoint for authenticated HA users.
