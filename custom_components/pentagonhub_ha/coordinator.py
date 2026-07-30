@@ -40,6 +40,7 @@ class PentagonHubDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._command_lock = asyncio.Lock()
         self._event_task: asyncio.Task[None] | None = None
         self._event_stop = asyncio.Event()
+        self._commands_started = False
         super().__init__(
             hass,
             _LOGGER,
@@ -56,6 +57,8 @@ class PentagonHubDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self.entry.data[CONF_INSTALLATION_TOKEN],
                 payload,
             )
+            if self._commands_started:
+                await self._async_drain_commands()
             return heartbeat
         except PentagonHubApiError as err:
             raise UpdateFailed(str(err)) from err
@@ -66,15 +69,17 @@ class PentagonHubDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if self._event_task is not None and not self._event_task.done():
             return
         self._event_stop.clear()
-        self._event_task = self.hass.async_create_task(
+        self._commands_started = True
+        self._event_task = self.hass.async_create_background_task(
             self._async_run_event_stream(),
-            name=f"{DOMAIN}-{self.entry.entry_id}-events",
+            f"{DOMAIN}-{self.entry.entry_id}-events",
         )
 
     async def async_stop_event_stream(self) -> None:
         """Stop the outbound Core notification stream."""
 
         self._event_stop.set()
+        self._commands_started = False
         task = self._event_task
         self._event_task = None
         if task is None:
