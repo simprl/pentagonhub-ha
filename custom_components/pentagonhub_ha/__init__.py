@@ -99,6 +99,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         platforms=platforms,
     )
     await hass.config_entries.async_forward_entry_setups(entry, platforms)
+    coordinator.async_start_event_stream()
     return True
 
 
@@ -141,6 +142,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     platforms = runtime.platforms if runtime else BASE_PLATFORMS
     unload_ok = await hass.config_entries.async_unload_platforms(entry, platforms)
     if unload_ok:
+        if runtime:
+            await runtime.coordinator.async_stop_event_stream()
         hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
     return unload_ok
 

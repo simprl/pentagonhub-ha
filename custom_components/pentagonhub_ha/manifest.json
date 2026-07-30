@@ -6,8 +6,8 @@
   "config_flow": true,
   "documentation": "https://pentagonhub.com",
   "integration_type": "hub",
-  "iot_class": "cloud_polling",
+  "iot_class": "cloud_push",
   "requirements": [],
   "single_config_entry": true,
-  "version": "0.2.3"
+  "version": "0.2.4"
 }
