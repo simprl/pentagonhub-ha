@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+import codecs
+import json
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
-from aiohttp import ClientError, ClientResponse, ClientSession
+from aiohttp import ClientError, ClientResponse, ClientSession, ClientTimeout
+
+from .sse import ServerSentEventParser
 
 DEFAULT_TIMEOUT_SECONDS = 20
 
@@ -66,6 +70,42 @@ class PentagonHubApiClient:
             {},
             headers={"Authorization": f"Bearer {installation_token}"},
         )
+
+    async def command_events(self, installation_token: str):
+        """Yield Core-to-HA notification events from the SSE stream."""
+
+        url = f"{self._api_base_url}/pentagonhub-ha/events"
+        timeout = ClientTimeout(
+            total=None,
+            connect=DEFAULT_TIMEOUT_SECONDS,
+            sock_connect=DEFAULT_TIMEOUT_SECONDS,
+            sock_read=None,
+        )
+        parser = ServerSentEventParser()
+        decoder = codecs.getincrementaldecoder("utf-8")()
+        try:
+            async with self._session.get(
+                url,
+                headers={
+                    "Authorization": f"Bearer {installation_token}",
+                    "Accept": "text/event-stream",
+                },
+                timeout=timeout,
+            ) as response:
+                if response.status >= 400:
+                    await _read_json_response(response)
+                async for chunk in response.content.iter_any():
+                    for event in parser.feed(decoder.decode(chunk)):
+                        try:
+                            data = json.loads(event.data)
+                        except ValueError:
+                            continue
+                        if isinstance(data, dict):
+                            yield event.event, data
+        except TimeoutError as err:
+            raise PentagonHubApiError("PentagonHub event stream timed out") from err
+        except ClientError as err:
+            raise PentagonHubApiError(f"PentagonHub event stream failed: {err}") from err
 
     async def send_command_progress(
         self,

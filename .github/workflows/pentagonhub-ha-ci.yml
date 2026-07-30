@@ -1,0 +1,30 @@
+name: PentagonHub HA CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: python -m compileall -q custom_components/pentagonhub_ha
+      - name: Validate public integration metadata
+        run: >-
+          node -e "const fs=require('node:fs');
+          const manifest=JSON.parse(fs.readFileSync('custom_components/pentagonhub_ha/manifest.json','utf8'));
+          const hacs=JSON.parse(fs.readFileSync('hacs.json','utf8'));
+          if(manifest.domain!=='pentagonhub_ha'||!manifest.version)throw new Error('Invalid manifest');
+          if(hacs.zip_release!==true||hacs.filename!=='pentagonhub_ha.zip')throw new Error('Invalid HACS config');"

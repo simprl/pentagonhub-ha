@@ -1,6 +1,6 @@
 {
   "schema_version": "pentagonhub_ha_build_v1",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "profile": "live",
   "source_commit": null
 }

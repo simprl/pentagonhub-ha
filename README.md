@@ -54,11 +54,11 @@ Implemented now:
 - storage of the scoped PentagonHub installation token in the Home Assistant
   config entry;
 - immediate and periodic heartbeat to PentagonHub Core;
+- outbound SSE command notifications with authenticated HTTP command draining;
 - connection-state sensor;
 - redacted diagnostics;
 - local `/api/pentagonhub_ha/status` endpoint for authenticated HA users.
 
-Deferred until the matching PentagonHub Core endpoint exists:
+Still deferred:
 
-- outbound command WebSocket;
 - release apply/export/rollback services and buttons.
