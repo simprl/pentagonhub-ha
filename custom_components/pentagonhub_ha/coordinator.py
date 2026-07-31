@@ -58,6 +58,7 @@ class PentagonHubDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 payload,
             )
             if self._commands_started:
+                self.async_start_event_stream()
                 await self._async_drain_commands()
             return heartbeat
         except PentagonHubApiError as err:
