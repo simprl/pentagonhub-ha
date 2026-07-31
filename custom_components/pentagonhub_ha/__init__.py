@@ -10,8 +10,8 @@ from typing import Any
 
 from homeassistant import config_entries
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant
+from homeassistant.const import EVENT_HOMEASSISTANT_STARTED, Platform
+from homeassistant.core import CoreState, Event, HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 
 from .build_profile import BUILD_PROFILE
@@ -98,9 +98,33 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         sandbox=sandbox,
         platforms=platforms,
     )
-    await hass.config_entries.async_forward_entry_setups(entry, platforms)
-    coordinator.async_start_event_stream()
+    try:
+        await hass.config_entries.async_forward_entry_setups(entry, platforms)
+    except Exception:
+        hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
+        raise
+    await _async_start_event_stream_after_startup(hass, entry)
     return True
+
+
+async def _async_start_event_stream_after_startup(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+) -> None:
+    """Start command transport outside Home Assistant's startup phase."""
+
+    async def start_event_stream(_: Event | None = None) -> None:
+        runtime = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+        if runtime is not None:
+            runtime.coordinator.async_start_event_stream()
+
+    if hass.state == CoreState.running:
+        await start_event_stream()
+        return
+
+    entry.async_on_unload(
+        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, start_event_stream)
+    )
 
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
