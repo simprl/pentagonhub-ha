@@ -29,6 +29,10 @@ BASE_PLATFORMS: tuple[Platform, ...] = (Platform.SENSOR,)
 DEV_PLATFORMS: tuple[Platform, ...] = (
     Platform.BINARY_SENSOR,
     Platform.SWITCH,
+    Platform.NUMBER,
+    Platform.SELECT,
+    Platform.TEXT,
+    Platform.UPDATE,
     Platform.CLIMATE,
     Platform.MEDIA_PLAYER,
     Platform.ALARM_CONTROL_PANEL,
