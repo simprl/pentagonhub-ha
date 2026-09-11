@@ -5,7 +5,7 @@ from __future__ import annotations
 DOMAIN = "pentagonhub_ha"
 NAME = "PentagonHub"
 
-INTEGRATION_VERSION = "0.3.0"
+INTEGRATION_VERSION = "0.4.0"
 PROTOCOL_VERSION = 1
 
 DEFAULT_API_BASE_URL = "https://center.pentagonhub.com/api"
