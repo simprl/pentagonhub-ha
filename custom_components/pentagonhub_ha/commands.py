@@ -36,6 +36,8 @@ from .managed_configuration import (
     delete_managed_file as _delete_managed_file,
     managed_file_bytes as _managed_file_bytes,
     managed_file_hash as _managed_file_hash,
+    managed_file_hash_for_write as _managed_file_hash_for_write,
+    write_projected_managed_file as _write_projected_managed_file,
     write_managed_file as _write_managed_file,
 )
 
@@ -151,12 +153,59 @@ async def async_execute_command(
                 _required_string(payload, "artifact_download_url"),
                 download_path,
             )
+            modbus_manifest = await hass.async_add_executor_job(
+                _read_modbus_manifest_artifact,
+                download_path,
+                _required_string(dict(entry.data), CONF_INSTALLATION_ID),
+                payload.get("artifact_sha256"),
+            )
+            modbus_apply_result = None
+            if BUILD_PROFILE == "dev" and entry.data.get(CONF_INSTALLATION_MODE) == "dev":
+                from .modbus_sandbox_client import async_apply_modbus_manifest
+
+                modbus_apply_result = await async_apply_modbus_manifest(
+                    hass,
+                    Path(hass.config.path()),
+                    modbus_manifest,
+                )
             result = await hass.async_add_executor_job(
                 _apply_export_artifact,
                 Path(hass.config.path()),
                 command_id,
                 payload,
                 download_path,
+            )
+            restart_required = False
+            if modbus_apply_result is not None:
+                from .modbus_sandbox_client import async_activate_modbus_configuration
+
+                activation = await async_activate_modbus_configuration(
+                    hass,
+                    modbus_apply_result,
+                )
+                result["modbus_activation"] = activation
+                restart_required = activation == "restart_required"
+            await client.complete_command(installation_token, command_id, result)
+            if restart_required:
+                hass.async_create_task(
+                    hass.services.async_call(
+                        "homeassistant",
+                        "restart",
+                        blocking=False,
+                    ),
+                    "PentagonHub first Modbus configuration restart",
+                )
+            return
+
+        if command_type == "ha.modbus_sandbox.control":
+            if BUILD_PROFILE != "dev" or entry.data.get(CONF_INSTALLATION_MODE) != "dev":
+                raise ValueError("Modbus sandbox control is available only in Dev")
+            from .modbus_sandbox_client import async_execute_modbus_control
+
+            result = await async_execute_modbus_control(
+                hass,
+                Path(hass.config.path()),
+                payload,
             )
             await client.complete_command(installation_token, command_id, result)
             return
@@ -418,10 +467,21 @@ def _apply_export_artifact(
                 raise ValueError(f"Artifact file hash mismatch: {relative_path}")
 
             target_path = config_dir / relative_path
-            previous_hash = _managed_file_hash(relative_path, target_path)
-            next_hash = hashlib.sha256(content).hexdigest()
+            previous_hash = _managed_file_hash_for_write(relative_path, target_path)
             target_path.parent.mkdir(parents=True, exist_ok=True)
-            _write_managed_file(config_dir, relative_path, content)
+            source_member = f"managed-source/{relative_path}"
+            if source_member in archive.namelist():
+                source_content = archive.read(source_member)
+                next_hash = hashlib.sha256(source_content).hexdigest()
+                _write_projected_managed_file(
+                    config_dir,
+                    relative_path,
+                    source_content,
+                    content,
+                )
+            else:
+                next_hash = hashlib.sha256(content).hexdigest()
+                _write_managed_file(config_dir, relative_path, content)
             applied_files += 1
             if previous_hash != next_hash:
                 changed_files.append(relative_path)
@@ -432,6 +492,43 @@ def _apply_export_artifact(
         "applied_files": applied_files,
         "changed_files": changed_files,
     }
+
+
+def _read_modbus_manifest_artifact(
+    artifact_path: Path,
+    installation_id: str,
+    expected_sha256: Any,
+) -> dict[str, Any]:
+    if (
+        isinstance(expected_sha256, str)
+        and expected_sha256
+        and _sha256_file(artifact_path) != expected_sha256
+    ):
+        raise ValueError("Artifact hash mismatch")
+    with zipfile.ZipFile(artifact_path, "r") as archive:
+        try:
+            raw = archive.read("modbus-sandbox.json")
+        except KeyError:
+            return {
+                "schema_version": "modbus_sandbox_v1",
+                "installation_id": installation_id,
+                "generated_at": _utc_now_iso(),
+                "endpoints": [],
+            }
+    if len(raw) > 5 * 1024 * 1024:
+        raise ValueError("Dev Modbus sandbox manifest is too large")
+    try:
+        manifest = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as err:
+        raise ValueError("Dev Modbus sandbox manifest is invalid") from err
+    if (
+        not isinstance(manifest, dict)
+        or manifest.get("schema_version") != "modbus_sandbox_v1"
+        or manifest.get("installation_id") != installation_id
+        or not isinstance(manifest.get("endpoints"), list)
+    ):
+        raise ValueError("Dev Modbus sandbox manifest is invalid")
+    return manifest
 
 
 def _apply_release_artifact(
@@ -472,7 +569,7 @@ def _apply_release_artifact(
     changed_files: list[str] = []
     for relative_path, content, next_hash in planned_files:
         target_path = config_dir / relative_path
-        previous_hash = _managed_file_hash(relative_path, target_path)
+        previous_hash = _managed_file_hash_for_write(relative_path, target_path)
         target_path.parent.mkdir(parents=True, exist_ok=True)
         _write_managed_file(config_dir, relative_path, content)
         if previous_hash != next_hash:
@@ -559,7 +656,7 @@ def _rollback_release(
     changed_files: list[str] = []
     for relative_path, content, next_hash in planned_files:
         target_path = config_dir / relative_path
-        previous_hash = _managed_file_hash(relative_path, target_path)
+        previous_hash = _managed_file_hash_for_write(relative_path, target_path)
         target_path.parent.mkdir(parents=True, exist_ok=True)
         _write_managed_file(config_dir, relative_path, content)
         if previous_hash != next_hash:
@@ -644,7 +741,7 @@ def _apply_delta_files(
     changed_files: list[str] = []
     for relative_path, content, next_hash in planned_files:
         target_path = config_dir / relative_path
-        previous_hash = _managed_file_hash(relative_path, target_path)
+        previous_hash = _managed_file_hash_for_write(relative_path, target_path)
         target_path.parent.mkdir(parents=True, exist_ok=True)
         _write_managed_file(config_dir, relative_path, content)
         if previous_hash != next_hash:

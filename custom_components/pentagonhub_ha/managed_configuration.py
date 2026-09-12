@@ -13,6 +13,8 @@ RUNTIME_STATE_PATH = Path(".pentagonhub_ha") / "managed_runtime.json"
 MANAGED_SOURCE_PATH = (
     Path(".pentagonhub_ha") / "managed-source" / "configuration.yaml"
 )
+MANAGED_SOURCE_ROOT = Path(".pentagonhub_ha") / "managed-source"
+MANAGED_SOURCE_INDEX_PATH = MANAGED_SOURCE_ROOT / "index.json"
 PROXY_MARKER_BEGIN = "# PentagonHub managed reverse proxy: begin"
 PROXY_MARKER_END = "# PentagonHub managed reverse proxy: end"
 INTEGRATION_MARKER_BEGIN = "# PentagonHub managed integration: begin"
@@ -22,6 +24,10 @@ _TOP_LEVEL_HTTP_RE = re.compile(r"^http\s*:\s*(?:#.*)?$")
 _ANY_TOP_LEVEL_HTTP_RE = re.compile(r"^http\s*:")
 _TOP_LEVEL_INTEGRATION_RE = re.compile(r"^pentagonhub_ha\s*:\s*(?:#.*)?$")
 _HTTP_RUNTIME_KEY_RE = re.compile(r"^(use_x_forwarded_for|trusted_proxies)\s*:")
+
+
+class ProjectedManagedFileStateError(ValueError):
+    """Projected Dev content cannot be represented as canonical Project bytes."""
 
 
 def canonical_managed_configuration(content: bytes) -> bytes:
@@ -81,15 +87,33 @@ def managed_file_bytes(relative_path: str, path: Path) -> bytes:
     """Read canonical bytes for a managed file."""
 
     content = path.read_bytes()
+    config_dir = _config_dir_for_managed_path(relative_path, path)
+    source_path = config_dir / MANAGED_SOURCE_ROOT / relative_path
+    projected_hash = _projected_effective_hash(config_dir, relative_path)
+    if projected_hash is not None:
+        if projected_hash != hashlib.sha256(content).hexdigest():
+            raise ProjectedManagedFileStateError(
+                "Projected Dev managed file was edited directly and cannot be "
+                f"captured safely: {relative_path}"
+            )
+        if (
+            not source_path.exists()
+            or not source_path.is_file()
+            or source_path.is_symlink()
+        ):
+            raise ProjectedManagedFileStateError(
+                f"Canonical source for projected managed file is missing: {relative_path}"
+            )
+        return source_path.read_bytes()
     if relative_path == "configuration.yaml":
-        source_path = path.parent / MANAGED_SOURCE_PATH
+        source_path = config_dir / MANAGED_SOURCE_PATH
         if (
             source_path.exists()
             and source_path.is_file()
             and not source_path.is_symlink()
         ):
             source = source_path.read_bytes()
-            if materialize_managed_configuration(path.parent, source) == content:
+            if materialize_managed_configuration(config_dir, source) == content:
                 return source
         return canonical_managed_configuration(content)
     return content
@@ -103,10 +127,20 @@ def managed_file_hash(relative_path: str, path: Path) -> str | None:
     return hashlib.sha256(managed_file_bytes(relative_path, path)).hexdigest()
 
 
+def managed_file_hash_for_write(relative_path: str, path: Path) -> str | None:
+    """Hash existing canonical bytes, allowing an explicit write to repair projection drift."""
+
+    try:
+        return managed_file_hash(relative_path, path)
+    except ProjectedManagedFileStateError:
+        return None
+
+
 def write_managed_file(config_dir: Path, relative_path: str, content: bytes) -> None:
     """Write source bytes while materializing managed-host runtime data."""
 
     target_path = config_dir / relative_path
+    _remove_projected_source(config_dir, relative_path)
     if relative_path == "configuration.yaml":
         source = content
         content = materialize_managed_configuration(config_dir, source)
@@ -119,6 +153,30 @@ def write_managed_file(config_dir: Path, relative_path: str, content: bytes) -> 
     target_path.write_bytes(content)
 
 
+def write_projected_managed_file(
+    config_dir: Path,
+    relative_path: str,
+    source: bytes,
+    effective: bytes,
+) -> None:
+    """Write a Dev-only effective file while retaining canonical Project bytes."""
+
+    target_path = config_dir / relative_path
+    source_path = config_dir / MANAGED_SOURCE_ROOT / relative_path
+    source_path.parent.mkdir(parents=True, exist_ok=True)
+    if source_path.parent.is_symlink() or source_path.is_symlink():
+        raise ValueError("Managed projected source path is unsafe")
+    source_path.write_bytes(source)
+
+    content = effective
+    if relative_path == "configuration.yaml":
+        content = materialize_managed_configuration(config_dir, effective)
+    target_path.write_bytes(content)
+    index = _read_projected_source_index(config_dir)
+    index[relative_path] = hashlib.sha256(content).hexdigest()
+    _write_projected_source_index(config_dir, index)
+
+
 def delete_managed_file(config_dir: Path, relative_path: str) -> bool:
     """Delete managed content while retaining required runtime configuration."""
 
@@ -129,6 +187,7 @@ def delete_managed_file(config_dir: Path, relative_path: str) -> bool:
         or target_path.is_symlink()
     ):
         return False
+    _remove_projected_source(config_dir, relative_path)
     if relative_path == "configuration.yaml":
         source_path = config_dir / MANAGED_SOURCE_PATH
         if (
@@ -143,6 +202,63 @@ def delete_managed_file(config_dir: Path, relative_path: str) -> bool:
             return True
     target_path.unlink()
     return True
+
+
+def _projected_effective_hash(config_dir: Path, relative_path: str) -> str | None:
+    return _read_projected_source_index(config_dir).get(relative_path)
+
+
+def _config_dir_for_managed_path(relative_path: str, path: Path) -> Path:
+    config_dir = path
+    for _part in Path(relative_path).parts:
+        config_dir = config_dir.parent
+    return config_dir
+
+
+def _read_projected_source_index(config_dir: Path) -> dict[str, str]:
+    path = config_dir / MANAGED_SOURCE_INDEX_PATH
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except (OSError, json.JSONDecodeError) as err:
+        raise ValueError("Managed projected source index is invalid") from err
+    if not isinstance(value, dict):
+        raise ValueError("Managed projected source index is invalid")
+    result: dict[str, str] = {}
+    for relative_path, sha256 in value.items():
+        if (
+            not isinstance(relative_path, str)
+            or not isinstance(sha256, str)
+            or not re.fullmatch(r"[a-f0-9]{64}", sha256)
+        ):
+            raise ValueError("Managed projected source index is invalid")
+        result[relative_path] = sha256
+    return result
+
+
+def _write_projected_source_index(config_dir: Path, index: dict[str, str]) -> None:
+    path = config_dir / MANAGED_SOURCE_INDEX_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.parent.is_symlink() or path.is_symlink():
+        raise ValueError("Managed projected source index path is unsafe")
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(
+        json.dumps(index, sort_keys=True, separators=(",", ":")),
+        encoding="utf-8",
+    )
+    temporary.replace(path)
+
+
+def _remove_projected_source(config_dir: Path, relative_path: str) -> None:
+    index = _read_projected_source_index(config_dir)
+    if relative_path not in index:
+        return
+    del index[relative_path]
+    source_path = config_dir / MANAGED_SOURCE_ROOT / relative_path
+    if source_path.exists() and source_path.is_file() and not source_path.is_symlink():
+        source_path.unlink()
+    _write_projected_source_index(config_dir, index)
 
 
 def _read_runtime_state(config_dir: Path) -> dict[str, Any] | None:
