@@ -90,9 +90,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     sandbox = None
     platforms = BASE_PLATFORMS
     if is_dev:
+        from .modbus_sandbox_client import async_restore_modbus_manifest
         from .sandbox_runtime import async_load_sandbox_runtime
         from .sandbox_services import async_register_sandbox_services
 
+        try:
+            await async_restore_modbus_manifest(hass, Path(hass.config.path()))
+        except ValueError as err:
+            raise ConfigEntryNotReady(
+                f"PentagonHub Modbus sandbox is not reachable: {err}"
+            ) from err
         async_register_sandbox_services(hass)
         sandbox = await async_load_sandbox_runtime(hass, entry.entry_id)
         platforms = (*BASE_PLATFORMS, *DEV_PLATFORMS)
