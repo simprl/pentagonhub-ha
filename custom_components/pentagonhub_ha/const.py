@@ -2,10 +2,24 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 DOMAIN = "pentagonhub_ha"
 NAME = "PentagonHub"
 
-INTEGRATION_VERSION = "0.5.0"
+
+def _integration_version() -> str:
+    manifest = json.loads(
+        Path(__file__).with_name("manifest.json").read_text(encoding="utf-8")
+    )
+    version = manifest.get("version")
+    if not isinstance(version, str) or not version:
+        raise ValueError("PentagonHub HA manifest version is invalid")
+    return version
+
+
+INTEGRATION_VERSION = _integration_version()
 PROTOCOL_VERSION = 1
 
 DEFAULT_API_BASE_URL = "https://center.pentagonhub.com/api"
