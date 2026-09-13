@@ -161,9 +161,9 @@ async def async_execute_command(
             )
             modbus_apply_result = None
             if BUILD_PROFILE == "dev" and entry.data.get(CONF_INSTALLATION_MODE) == "dev":
-                from .modbus_sandbox_client import async_apply_modbus_manifest
+                from .modbus_sandbox_client import async_apply_modbus_projection_manifest
 
-                modbus_apply_result = await async_apply_modbus_manifest(
+                modbus_apply_result = await async_apply_modbus_projection_manifest(
                     hass,
                     Path(hass.config.path()),
                     modbus_manifest,
@@ -206,6 +206,30 @@ async def async_execute_command(
                 hass,
                 Path(hass.config.path()),
                 payload,
+            )
+            await client.complete_command(installation_token, command_id, result)
+            return
+
+        if command_type == "ha.modbus_sandbox.apply_context":
+            _require_dev_installation(entry)
+            from .modbus_sandbox_client import async_apply_modbus_context_manifest
+
+            download_path = _tmp_dir(Path(hass.config.path())) / f"modbus-context-{command_id}.json"
+            await client.download_artifact_to_path(
+                installation_token,
+                _required_string(payload, "artifact_download_url"),
+                download_path,
+            )
+            manifest = await hass.async_add_executor_job(
+                _read_modbus_context_manifest_artifact,
+                download_path,
+                _required_string(dict(entry.data), CONF_INSTALLATION_ID),
+                payload.get("artifact_sha256"),
+            )
+            result = await async_apply_modbus_context_manifest(
+                hass,
+                Path(hass.config.path()),
+                manifest,
             )
             await client.complete_command(installation_token, command_id, result)
             return
@@ -349,6 +373,7 @@ async def async_execute_command(
 
         if command_type == "ha.sandbox.clear":
             _require_dev_installation(entry)
+            from .modbus_sandbox_client import async_clear_modbus_context
             from .sandbox_runtime import clear_sandbox_runtime
 
             _remove_stale_sandbox_registry_entries(
@@ -357,6 +382,10 @@ async def async_execute_command(
             )
             result = await hass.async_add_executor_job(
                 clear_sandbox_runtime,
+                Path(hass.config.path()),
+            )
+            result["modbus"] = await async_clear_modbus_context(
+                hass,
                 Path(hass.config.path()),
             )
             await _async_reload_sandbox_platforms(hass, entry)
@@ -528,6 +557,33 @@ def _read_modbus_manifest_artifact(
         or not isinstance(manifest.get("endpoints"), list)
     ):
         raise ValueError("Dev Modbus sandbox manifest is invalid")
+    return manifest
+
+
+def _read_modbus_context_manifest_artifact(
+    artifact_path: Path,
+    installation_id: str,
+    expected_sha256: Any,
+) -> dict[str, Any]:
+    if (
+        isinstance(expected_sha256, str)
+        and expected_sha256
+        and _sha256_file(artifact_path) != expected_sha256
+    ):
+        raise ValueError("Artifact hash mismatch")
+    if artifact_path.stat().st_size > 5 * 1024 * 1024:
+        raise ValueError("Dev Modbus context manifest is too large")
+    try:
+        manifest = json.loads(artifact_path.read_bytes())
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as err:
+        raise ValueError("Dev Modbus context manifest is invalid") from err
+    if (
+        not isinstance(manifest, dict)
+        or manifest.get("schema_version") != "modbus_sandbox_v1"
+        or manifest.get("installation_id") != installation_id
+        or not isinstance(manifest.get("endpoints"), list)
+    ):
+        raise ValueError("Dev Modbus context manifest is invalid")
     return manifest
 
 
