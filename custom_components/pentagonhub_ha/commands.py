@@ -210,6 +210,14 @@ async def async_execute_command(
             await client.complete_command(installation_token, command_id, result)
             return
 
+        if command_type == "ha.dev_service.call":
+            _require_dev_installation(entry)
+            from .dev_services import async_call_dev_service
+
+            result = await async_call_dev_service(hass, payload)
+            await client.complete_command(installation_token, command_id, result)
+            return
+
         if command_type == "ha.modbus_sandbox.apply_context":
             _require_dev_installation(entry)
             from .modbus_sandbox_client import async_apply_modbus_context_manifest
