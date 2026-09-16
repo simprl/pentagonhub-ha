@@ -218,6 +218,22 @@ async def async_execute_command(
             await client.complete_command(installation_token, command_id, result)
             return
 
+        if command_type == "ha.dev_state.read":
+            _require_dev_installation(entry)
+            from .dev_services import async_read_dev_state
+
+            result = await async_read_dev_state(hass, payload)
+            await client.complete_command(installation_token, command_id, result)
+            return
+
+        if command_type == "ha.dev_state.wait":
+            _require_dev_installation(entry)
+            from .dev_services import async_wait_dev_state
+
+            result = await async_wait_dev_state(hass, payload)
+            await client.complete_command(installation_token, command_id, result)
+            return
+
         if command_type == "ha.modbus_sandbox.apply_context":
             _require_dev_installation(entry)
             from .modbus_sandbox_client import async_apply_modbus_context_manifest
