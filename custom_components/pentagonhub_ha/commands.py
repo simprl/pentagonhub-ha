@@ -31,6 +31,11 @@ from .const import (
     SANDBOX_UNIQUE_ID_PREFIX,
     STORAGE_DIR_NAME,
 )
+from .context_redaction import (
+    RedactionStats,
+    sanitize_context_json as _sanitize_context_json,
+    sanitize_secret_json as _sanitize_secret_json,
+)
 from .json_values import jsonify as _jsonify
 from .managed_configuration import (
     delete_managed_file as _delete_managed_file,
@@ -81,8 +86,6 @@ _DENIED_DIRS = (
     "tts/",
     ".pentagonhub_ha/",
 )
-_SECRET_FIELD_RE = re.compile(r"(token|password|secret|credential|authorization|auth)", re.IGNORECASE)
-_SECRET_QUERY_RE = re.compile(r"([?&](?:token|auth|access_token|password)=)[^&\s]+", re.IGNORECASE)
 
 
 @dataclass(slots=True)
@@ -841,31 +844,34 @@ async def _async_export_context(
     payload: dict[str, Any],
 ) -> dict[str, Any]:
     exported_at = _utc_now_iso()
+    redaction_stats = RedactionStats()
     entity_registry = er.async_get(hass)
     device_registry = dr.async_get(hass)
     area_registry = ar.async_get(hass)
     entities = [
-        _sanitize_json(
+        _sanitize_context_json(
             {
                 **_jsonify(state.as_dict()),
                 "domain": state.entity_id.split(".", 1)[0],
             },
+            redaction_stats,
         )
         for state in hass.states.async_all()
     ]
     entity_entries = [
-        _sanitize_json(_jsonify(entry))
+        _sanitize_context_json(_jsonify(entry), redaction_stats)
         for entity_id in entity_registry.entities
         if (entry := entity_registry.async_get(entity_id)) is not None
     ]
     device_entries = [
-        _sanitize_json(_jsonify(entry))
+        _sanitize_context_json(_jsonify(entry), redaction_stats)
         for entry in device_registry.devices.values()
     ]
     area_entries = [
-        _sanitize_json(_jsonify(entry))
+        _sanitize_context_json(_jsonify(entry), redaction_stats)
         for entry in area_registry.areas.values()
     ]
+    redaction_summary = redaction_stats.as_dict()
 
     entities.sort(key=lambda item: str(item.get("entity_id", "")))
     entity_entries.sort(key=lambda item: str(item.get("entity_id", item.get("id", ""))))
@@ -875,6 +881,7 @@ async def _async_export_context(
     return {
         "schema_version": 1,
         "export_type": "ha_context",
+        "sanitization_version": 2,
         "exported_at": exported_at,
         "ha_version": HA_VERSION,
         "command_id": command_id,
@@ -883,6 +890,8 @@ async def _async_export_context(
             "source": "pentagonhub-ha",
             "created_at": exported_at,
             "ha_version": HA_VERSION,
+            "sanitization_version": 2,
+            "redaction_summary": redaction_summary,
         },
         "entities": entities,
         "entity_registry": entity_entries,
@@ -894,6 +903,7 @@ async def _async_export_context(
             "device_registry": len(device_entries),
             "area_registry": len(area_entries),
         },
+        "redaction_summary": redaction_summary,
     }
 
 
@@ -911,7 +921,7 @@ async def _async_export_sandbox(
 
     for state in hass.states.async_all():
         registry_entry = entity_registry.async_get(state.entity_id)
-        attributes = _bounded_attributes(_sanitize_json(_jsonify(dict(state.attributes))))
+        attributes = _bounded_attributes(_sanitize_secret_json(_jsonify(dict(state.attributes))))
         entities.append(
             {
                 "entity_id": state.entity_id,
@@ -1069,9 +1079,17 @@ def _context_result_summary(result: dict[str, Any]) -> dict[str, Any]:
     counts = result.get("counts")
     if not isinstance(counts, dict):
         raise ValueError("Context export counts are missing")
+    sanitization_version = result.get("sanitization_version")
+    redaction_summary = result.get("redaction_summary")
     return {
         "exported_at": _required_string(result, "exported_at"),
         "ha_version": _required_string(result, "ha_version"),
+        "sanitization_version": sanitization_version
+        if isinstance(sanitization_version, int)
+        else None,
+        "redaction_summary": redaction_summary
+        if isinstance(redaction_summary, dict)
+        else None,
         "entities_count": _required_nonnegative_integer(counts, "entities"),
         "entity_registry_count": _required_nonnegative_integer(
             counts,
@@ -1514,18 +1532,6 @@ def _remove_stale_sandbox_registry_entries(
         if expected_entity_id == registry_entry.entity_id:
             continue
         registry.async_remove(registry_entry.entity_id)
-
-
-def _sanitize_json(value: Any, key: str | None = None) -> Any:
-    if key and _SECRET_FIELD_RE.search(key):
-        return "<redacted>"
-    if isinstance(value, str):
-        return _SECRET_QUERY_RE.sub(r"\1<redacted>", value)
-    if isinstance(value, dict):
-        return {str(item_key): _sanitize_json(item_value, str(item_key)) for item_key, item_value in value.items()}
-    if isinstance(value, list):
-        return [_sanitize_json(item) for item in value]
-    return value
 
 
 def _utc_now_iso() -> str:
